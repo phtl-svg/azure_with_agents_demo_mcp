@@ -44,6 +44,8 @@
 #   subscriptions), go to:
 #     App Service → Configuration → General settings
 #     → SCM Basic Auth Publishing Credentials → On → Save
+#   Note: the Startup Command is found under Configuration → Stack settings
+#   (not General settings) in the current Azure Portal UI.
 #   Then you can download the publish profile from Overview → "Download publish profile".
 #
 # LINUX vs WINDOWS DIFFERENCE:
@@ -99,7 +101,7 @@ jobs:
       # when authenticated via OIDC (azure/login). With publish-profile auth
       # it raises an error. Instead, set the startup command once manually
       # in the Azure Portal:
-      #   App Service → Configuration → General settings
+      #   App Service → Configuration → Stack settings
       #   → Startup Command → bash startup.sh → Save
       # That setting persists across all future deployments.
       # ----------------------------------------------------------
