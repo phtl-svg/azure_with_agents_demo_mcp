@@ -1,0 +1,104 @@
+# ============================================================
+# GitHub Actions Workflow: Deploy to Azure App Service (Linux)
+# Authentication method: Publish Profile
+# ============================================================
+#
+# IMPORTANT — TWO WORKFLOW FILES EXIST IN THIS FOLDER:
+#   azure-deploy-oidc.yml            — uses OIDC, requires App Registration in Azure AD
+#   azure-deploy-publish-profile.yml (this file) — uses a Publish Profile secret downloaded from Azure Portal
+#
+# Only ONE should be active at a time. Having both present means both will
+# trigger on every push to main, causing a double deployment.
+# Keep the file you want to use. Delete or move the other out of .github/workflows/.
+#
+# ============================================================
+#
+# WHAT IS A GITHUB ACTIONS WORKFLOW?
+# A workflow is an automated process that runs in response to events (like a
+# code push). Each workflow lives in .github/workflows/ and is a YAML file.
+# GitHub reads this file and spins up a virtual machine ("runner") to execute
+# the steps you define.
+#
+# WHAT DOES THIS WORKFLOW DO?
+# Every time you push to the "main" branch, this workflow:
+#   1. Checks out your code onto the GitHub runner machine
+#   2. Packages the code as a ZIP file and sends it to your Azure App Service
+#   3. Tells Azure which command to use to start the app (startup.sh)
+#
+# WHY DON'T WE RUN PIP INSTALL HERE?
+# We let Azure do the pip install (via Oryx, Azure's Linux build engine) rather
+# than bundling a local venv into our ZIP. This keeps the ZIP small. Azure's
+# Oryx detects our requirements.txt automatically and installs everything.
+# This is controlled by the App Setting SCM_DO_BUILD_DURING_DEPLOYMENT=true
+# (set once in the Azure Portal).
+#
+# HOW AUTHENTICATION WORKS (publish profile):
+#
+#   The publish profile is an XML file downloaded from the Azure Portal that
+#   contains the credentials for your App Service's deployment endpoint (Kudu).
+#   You store its full XML content as a GitHub secret. The azure/webapps-deploy
+#   action reads it to authenticate and upload your code.
+#
+#   PREREQUISITE: "SCM Basic Auth Publishing Credentials" must be enabled on
+#   your App Service. If it is disabled (the Azure Portal default in newer
+#   subscriptions), go to:
+#     App Service → Configuration → General settings
+#     → SCM Basic Auth Publishing Credentials → On → Save
+#   Then you can download the publish profile from Overview → "Download publish profile".
+#
+# LINUX vs WINDOWS DIFFERENCE:
+# On Windows, we did not have a startup-command parameter — IIS handled startup
+# via web.config. On Linux, there is no IIS, so we must explicitly tell Azure
+# which command to run to start our app. We pass it here via startup-command,
+# which points to our startup.sh script.
+#
+# SECRETS (stored in GitHub → Settings → Secrets and Variables → Actions):
+#   AZURE_WEBAPP_NAME            : The name of your Azure Web App (e.g. "my-agent-api")
+#   AZURE_WEBAPP_PUBLISH_PROFILE : The full XML content of the publish profile
+#                                  downloaded from Azure Portal → Overview →
+#                                  "Download publish profile"
+#
+# ============================================================
+
+name: Deploy to Azure App Service (Linux) — Publish Profile
+
+on:
+  push:
+    branches:
+      - main          # Runs automatically on every push to main
+  workflow_dispatch:  # Also allows manual triggering from the GitHub UI Actions tab
+
+jobs:
+  deploy:
+    # We use ubuntu-latest because our Azure target is also Linux — consistent
+    # operating systems help catch environment-specific issues earlier.
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ----------------------------------------------------------
+      # STEP 1: Checkout
+      # Downloads your repository's code onto the runner machine.
+      # Without this, the runner has no files to work with.
+      # ----------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------
+      # STEP 2: Deploy to Azure Web App
+      # The azure/webapps-deploy action handles:
+      #   - Zipping the entire current directory (your code + startup.sh)
+      #   - Authenticating with Azure using the Publish Profile secret
+      #   - Uploading the ZIP to Azure's Kudu deployment engine
+      #   - Kudu unpacks the ZIP and runs Oryx to pip-install dependencies
+      #   - Azure registers "bash startup.sh" as the process to run
+      #
+      # The `package: .` means "zip everything in the current directory".
+      # ----------------------------------------------------------
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .
+          startup-command: "bash startup.sh"

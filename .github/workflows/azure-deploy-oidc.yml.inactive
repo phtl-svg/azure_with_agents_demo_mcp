@@ -1,0 +1,131 @@
+# ============================================================
+# GitHub Actions Workflow: Deploy to Azure App Service (Linux)
+# Authentication method: OIDC (OpenID Connect) — no passwords
+# ============================================================
+#
+# IMPORTANT — TWO WORKFLOW FILES EXIST IN THIS FOLDER:
+#   azure-deploy-oidc.yml            (this file) — uses OIDC, requires App Registration in Azure AD
+#   azure-deploy-publish-profile.yml             — uses a Publish Profile secret downloaded from Azure Portal
+#
+# Only ONE should be active at a time. Having both present means both will
+# trigger on every push to main, causing a double deployment.
+# Keep the file you want to use. Delete or move the other out of .github/workflows/.
+#
+# ============================================================
+#
+# WHAT IS A GITHUB ACTIONS WORKFLOW?
+# A workflow is an automated process that runs in response to events (like a
+# code push). Each workflow lives in .github/workflows/ and is a YAML file.
+# GitHub reads this file and spins up a virtual machine ("runner") to execute
+# the steps you define.
+#
+# WHAT DOES THIS WORKFLOW DO?
+# Every time you push to the "main" branch, this workflow:
+#   1. Checks out your code onto the GitHub runner machine
+#   2. Logs in to Azure using OIDC (no passwords — see below)
+#   3. Packages the code as a ZIP file and sends it to your Azure App Service
+#   4. Tells Azure which command to use to start the app (startup.sh)
+#
+# WHY DON'T WE RUN PIP INSTALL HERE?
+# We let Azure do the pip install (via Oryx, Azure's Linux build engine) rather
+# than bundling a local venv into our ZIP. This keeps the ZIP small. Azure's
+# Oryx detects our requirements.txt automatically and installs everything.
+# This is controlled by the App Setting SCM_DO_BUILD_DURING_DEPLOYMENT=true
+# (set once in the Azure Portal).
+#
+# HOW OIDC AUTHENTICATION WORKS (replaces the publish profile):
+#
+#   Old way (publish profile): GitHub stored a secret XML file containing Azure
+#   credentials. If that secret leaked, anyone could deploy to your app.
+#
+#   New way (OIDC — OpenID Connect):
+#   1. You pre-configure Azure to trust GitHub Actions from THIS specific
+#      repo and branch (done once in Azure Portal — see setup guide).
+#   2. At runtime, GitHub generates a short-lived signed JWT token proving
+#      "I am a workflow running from branch main of repo X".
+#   3. The azure/login step sends that token to Azure.
+#   4. Azure verifies it using GitHub's public keys and checks it matches
+#      the trusted repo/branch you configured.
+#   5. Azure issues a temporary access token (~1 hour) for the deployment.
+#      No password ever leaves either system.
+#
+# LINUX vs WINDOWS DIFFERENCE:
+# On Windows, we did not have a startup-command parameter — IIS handled startup
+# via web.config. On Linux, there is no IIS, so we must explicitly tell Azure
+# which command to run to start our app. We pass it here via startup-command,
+# which points to our startup.sh script.
+#
+# SECRETS (stored in GitHub → Settings → Secrets and Variables → Actions):
+#   AZURE_CLIENT_ID       : The "Application (client) ID" of your App Registration
+#   AZURE_TENANT_ID       : Your Azure AD "Directory (tenant) ID"
+#   AZURE_SUBSCRIPTION_ID : Your Azure Subscription ID
+#   AZURE_WEBAPP_NAME     : The name of your Azure Web App (e.g. "my-agent-api")
+#
+#   Note: No AZURE_WEBAPP_PUBLISH_PROFILE needed anymore.
+#
+# ============================================================
+
+name: Deploy to Azure App Service (Linux)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# PERMISSIONS: what this workflow is allowed to do at the GitHub level.
+# By default workflows have no permissions. OIDC requires id-token: write
+# so GitHub will generate the signed JWT token for the login step.
+# Without it, azure/login will fail before it even contacts Azure.
+permissions:
+  id-token: write  # Allow requesting an OIDC token from GitHub
+  contents: read   # Allow reading the repository (needed by checkout)
+
+jobs:
+  deploy:
+    # We use ubuntu-latest because our Azure target is also Linux — consistent
+    # operating systems help catch environment-specific issues earlier.
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ----------------------------------------------------------
+      # STEP 1: Checkout
+      # Downloads your repository's code onto the runner machine.
+      # Without this, the runner has no files to work with.
+      # ----------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------
+      # STEP 2: Log in to Azure via OIDC
+      #
+      # Requests a signed JWT from GitHub, sends it to Azure, and
+      # receives back a short-lived session token. All subsequent
+      # Azure Actions in this job use that session automatically —
+      # no credentials need to be passed to later steps explicitly.
+      # ----------------------------------------------------------
+      - name: Log in to Azure via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # ----------------------------------------------------------
+      # STEP 3: Deploy to Azure Web App
+      # The azure/webapps-deploy action handles:
+      #   - Zipping the entire current directory (your code + startup.sh)
+      #   - Authenticating with Azure using the active OIDC session (Step 2)
+      #   - Uploading the ZIP to Azure's Kudu deployment engine
+      #   - Kudu unpacks the ZIP and runs Oryx to pip-install dependencies
+      #   - Azure registers "bash startup.sh" as the process to run
+      #
+      # The `package: .` means "zip everything in the current directory".
+      # ----------------------------------------------------------
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          package: .
+          startup-command: "bash startup.sh"
