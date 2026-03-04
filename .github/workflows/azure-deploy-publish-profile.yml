@@ -91,9 +91,17 @@ jobs:
       #   - Authenticating with Azure using the Publish Profile secret
       #   - Uploading the ZIP to Azure's Kudu deployment engine
       #   - Kudu unpacks the ZIP and runs Oryx to pip-install dependencies
-      #   - Azure registers "bash startup.sh" as the process to run
       #
       # The `package: .` means "zip everything in the current directory".
+      #
+      # NOTE — startup-command is intentionally absent here:
+      # The azure/webapps-deploy@v3 action only supports startup-command
+      # when authenticated via OIDC (azure/login). With publish-profile auth
+      # it raises an error. Instead, set the startup command once manually
+      # in the Azure Portal:
+      #   App Service → Configuration → General settings
+      #   → Startup Command → bash startup.sh → Save
+      # That setting persists across all future deployments.
       # ----------------------------------------------------------
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
@@ -101,4 +109,3 @@ jobs:
           app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
           package: .
-          startup-command: "bash startup.sh"
