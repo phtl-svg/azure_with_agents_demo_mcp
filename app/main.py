@@ -27,6 +27,22 @@ logger = structlog.get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa
+    # Create all database tables that don't exist yet.
+    # Base.metadata.create_all() reads every model registered under Base
+    # (currently just Document) and issues CREATE TABLE IF NOT EXISTS.
+    # This means the first startup against a fresh database is safe —
+    # no manual migration step needed for development.
+    from app.db.session import engine
+    from app.db.models import Base
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("database_connected")
+    except Exception as e:
+        # Database is unavailable (not configured, deleted, or unreachable).
+        # The app starts anyway — endpoints that don't use the DB keep working.
+        # search_documents will return "no results" rather than crashing.
+        logger.warning("database_unavailable", error=str(e))
     logger.info("application_starting", environment=settings.ENVIRONMENT)
     yield
     logger.info("application_shutting_down")
