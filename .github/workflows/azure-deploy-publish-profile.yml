@@ -70,6 +70,17 @@ on:
       - main          # Runs automatically on every push to main
   workflow_dispatch:  # Also allows manual triggering from the GitHub UI Actions tab
 
+# PERMISSIONS:
+# azure/webapps-deploy@v3 creates a GitHub Deployment record (a status marker
+# visible in the repo's "Deployments" panel) after each successful deploy.
+# Creating that record requires the deployments: write permission on GITHUB_TOKEN.
+# Without it, the action gets a 403 Forbidden from the GitHub Extensions API
+# even though the actual Azure deployment may have succeeded.
+# contents: read is required by the checkout step.
+permissions:
+  contents: read
+  deployments: write
+
 jobs:
   deploy:
     # We use ubuntu-latest because our Azure target is also Linux — consistent
